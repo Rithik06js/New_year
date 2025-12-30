@@ -13,7 +13,13 @@ interface ImageItem {
   caption: string;
 }
 
-const ADMIN_PASSWORD = 'NewYear2025Admin!';
+interface Visitor {
+  id: string;
+  name: string;
+  visited_at: string;
+}
+
+const ADMIN_KEYS = ['NewYear2025Admin!', 'Admin2025', 'GreetingAdmin'];
 
 export function AdminPanel({ onClose }: AdminPanelProps) {
   const [step, setStep] = useState<'login' | 'dashboard'>('login');
@@ -21,20 +27,33 @@ export function AdminPanel({ onClose }: AdminPanelProps) {
   const [passwordVisible, setPasswordVisible] = useState(false);
   const [error, setError] = useState('');
   const [images, setImages] = useState<ImageItem[]>([]);
+  const [visitors, setVisitors] = useState<Visitor[]>([]);
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [caption, setCaption] = useState('');
 
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
-    if (password === ADMIN_PASSWORD) {
+    if (ADMIN_KEYS.includes(password)) {
       setStep('dashboard');
       setPassword('');
       setError('');
       loadImages();
+      loadVisitors();
     } else {
-      setError('Invalid password');
+      setError('Invalid admin key');
       setPassword('');
+    }
+  };
+
+  const loadVisitors = async () => {
+    const { data, error: err } = await supabase
+      .from('visitors')
+      .select('*')
+      .order('visited_at', { ascending: false });
+
+    if (!err && data) {
+      setVisitors(data as Visitor[]);
     }
   };
 
@@ -57,15 +76,30 @@ export function AdminPanel({ onClose }: AdminPanelProps) {
 
     setUploading(true);
     const file = files[0];
+
+    if (!file.type.startsWith('image/')) {
+      setError('Please select a valid image file');
+      setUploading(false);
+      return;
+    }
+
     const timestamp = Date.now();
     const fileName = `${timestamp}-${file.name}`;
 
     try {
-      const { error: uploadError, data } = await supabase.storage
+      const { error: uploadError } = await supabase.storage
         .from('greeting-images')
-        .upload(fileName, file);
+        .upload(fileName, file, {
+          cacheControl: '3600',
+          upsert: false
+        });
 
-      if (uploadError) throw uploadError;
+      if (uploadError) {
+        if (uploadError.message.includes('not found')) {
+          throw new Error('Storage bucket does not exist. Please contact admin to set up the greeting-images bucket.');
+        }
+        throw uploadError;
+      }
 
       const { data: publicData } = supabase.storage
         .from('greeting-images')
@@ -84,9 +118,12 @@ export function AdminPanel({ onClose }: AdminPanelProps) {
       if (insertError) throw insertError;
 
       setCaption('');
+      setError('');
       await loadImages();
     } catch (err) {
-      setError('Failed to upload image');
+      const errorMsg = err instanceof Error ? err.message : 'Failed to upload image';
+      console.error('Upload error:', err);
+      setError(errorMsg);
     }
     setUploading(false);
   };
@@ -100,6 +137,7 @@ export function AdminPanel({ onClose }: AdminPanelProps) {
 
       if (!error) {
         await loadImages();
+        await loadVisitors();
       }
     }
   };
@@ -111,6 +149,7 @@ export function AdminPanel({ onClose }: AdminPanelProps) {
       .eq('id', id);
 
     await loadImages();
+    await loadVisitors();
   };
 
   if (step === 'login') {
@@ -129,7 +168,7 @@ export function AdminPanel({ onClose }: AdminPanelProps) {
           <form onSubmit={handleLogin} className="space-y-4">
             <div className="space-y-2">
               <label className="block text-sm font-medium text-gray-700">
-                Admin Password
+                Admin Key
               </label>
               <div className="relative">
                 <input
@@ -167,7 +206,7 @@ export function AdminPanel({ onClose }: AdminPanelProps) {
 
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4 overflow-auto">
-      <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full p-8 relative my-8">
+      <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full p-8 relative my-8">
         <button
           onClick={onClose}
           className="absolute top-4 right-4 text-gray-500 hover:text-gray-700"
@@ -197,50 +236,71 @@ export function AdminPanel({ onClose }: AdminPanelProps) {
                 className="hidden"
               />
             </label>
+            {error && <p className="text-red-600 text-sm font-medium">{error}</p>}
           </div>
         </div>
 
-        <div className="space-y-4">
-          <h3 className="text-lg font-semibold text-gray-800">Images ({images.length})</h3>
-          {loading ? (
-            <p className="text-gray-600">Loading...</p>
-          ) : images.length === 0 ? (
-            <p className="text-gray-500 text-center py-8">No images uploaded yet</p>
-          ) : (
-            <div className="space-y-3 max-h-96 overflow-y-auto">
-              {images.map((image, idx) => (
-                <div key={image.id} className="flex items-center gap-4 p-4 bg-slate-50 rounded-lg">
-                  <img src={image.image_url} alt="preview" className="w-16 h-16 object-cover rounded" />
-                  <div className="flex-1 min-w-0">
-                    <p className="font-medium text-gray-800 truncate">{image.caption || 'No caption'}</p>
-                    <p className="text-sm text-gray-600">Order: {image.display_order}</p>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+          <div className="space-y-4">
+            <h3 className="text-lg font-semibold text-gray-800">Images ({images.length})</h3>
+            {loading ? (
+              <p className="text-gray-600">Loading...</p>
+            ) : images.length === 0 ? (
+              <p className="text-gray-500 text-center py-8">No images uploaded yet</p>
+            ) : (
+              <div className="space-y-3 max-h-96 overflow-y-auto">
+                {images.map((image, idx) => (
+                  <div key={image.id} className="flex items-center gap-4 p-4 bg-slate-50 rounded-lg">
+                    <img src={image.image_url} alt="preview" className="w-16 h-16 object-cover rounded" />
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium text-gray-800 truncate">{image.caption || 'No caption'}</p>
+                      <p className="text-sm text-gray-600">Order: {image.display_order}</p>
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => handleReorder(image.id, Math.max(0, image.display_order - 1))}
+                        disabled={idx === 0}
+                        className="px-3 py-1 bg-slate-300 text-gray-700 rounded disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-400"
+                      >
+                        ↑
+                      </button>
+                      <button
+                        onClick={() => handleReorder(image.id, image.display_order + 1)}
+                        disabled={idx === images.length - 1}
+                        className="px-3 py-1 bg-slate-300 text-gray-700 rounded disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-400"
+                      >
+                        ↓
+                      </button>
+                      <button
+                        onClick={() => handleDelete(image.id)}
+                        className="px-3 py-1 bg-red-500 hover:bg-red-600 text-white rounded"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
                   </div>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => handleReorder(image.id, Math.max(0, image.display_order - 1))}
-                      disabled={idx === 0}
-                      className="px-3 py-1 bg-slate-300 text-gray-700 rounded disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-400"
-                    >
-                      ↑
-                    </button>
-                    <button
-                      onClick={() => handleReorder(image.id, image.display_order + 1)}
-                      disabled={idx === images.length - 1}
-                      className="px-3 py-1 bg-slate-300 text-gray-700 rounded disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-400"
-                    >
-                      ↓
-                    </button>
-                    <button
-                      onClick={() => handleDelete(image.id)}
-                      className="px-3 py-1 bg-red-500 hover:bg-red-600 text-white rounded"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="space-y-4">
+            <h3 className="text-lg font-semibold text-gray-800">Visitor Names ({visitors.length})</h3>
+            {visitors.length === 0 ? (
+              <p className="text-gray-500 text-center py-8">No visitors yet</p>
+            ) : (
+              <div className="space-y-2 max-h-96 overflow-y-auto">
+                {visitors.map((visitor) => (
+                  <div key={visitor.id} className="p-3 bg-blue-50 rounded-lg border border-blue-200">
+                    <p className="font-medium text-gray-800">{visitor.name}</p>
+                    <p className="text-sm text-gray-600">
+                      {new Date(visitor.visited_at).toLocaleString()}
+                    </p>
                   </div>
-                </div>
-              ))}
-            </div>
-          )}
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </div>
