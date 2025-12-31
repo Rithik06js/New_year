@@ -13,7 +13,7 @@ function App() {
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.ctrlKey && e.shiftKey && e.key === 'A') {
+      if (e.ctrlKey && e.key === 'j') {
         e.preventDefault();
         setShowAdmin(true);
       }
